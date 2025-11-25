@@ -1,102 +1,131 @@
-// src/hooks/useOnlineGame.js
-// ... imports previos ...
-import { calculateNextTurn, checkWinCondition, generateInitialState } from '../utils/gameRules';
-// ... código de conexión Firebase (getRoomRef, listeners) se mantiene igual ...
+import { useState, useEffect } from 'react';
+import { doc, onSnapshot, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { generateGameParams, checkVictory } from '../core/gameLogic';
+import { STATUS } from '../constants/gameData';
 
-// DENTRO DE LA FUNCIÓN useOnlineGame, REEMPLAZA LOS MÉTODOS DE LÓGICA:
+export const useOnlineGame = (user) => {
+    const [roomCode, setRoomCode] = useState(null);
+    const [roomData, setRoomData] = useState(null);
+    const [error, setError] = useState('');
 
-  // --- 3. LÓGICA DE JUEGO OPTIMIZADA ---
-  
-  const startGame = async () => {
-    if (!roomData || roomData.players.length < 3) return setErrorMsg("Mínimo 3 jugadores");
-    
-    // Usamos el generador puro
-    const initialState = generateInitialState(roomData.players, WORD_PACKS);
-    
-    // Añadimos datos específicos de Firebase (como resetear isAlive en DB)
-    const resetPlayers = roomData.players.map(p => ({...p, isAlive: true}));
-    
-    await updateDoc(getRoomRef(roomCode), {
-      status: 'ASSIGN',
-      winner: null,
-      victoryType: '',
-      lastEjected: null,
-      votes: {},
-      players: resetPlayers,
-      gameData: initialState // Insertamos el objeto generado
-    });
-  };
+    // --- DEEP LINKING ---
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const codeParam = params.get('room');
+        if (codeParam && user) {
+            joinRoom(codeParam, "Invitado"); // Nota: Mejorar UX para pedir nombre
+        }
+    }, [user]);
 
-  const submitChat = async (text, playerId) => {
-    const { gameData, players } = roomData;
-    
-    // 1. Verificación Inmediata (Win condition)
-    if (playerId === gameData.impostorId && text.toLowerCase().includes(gameData.secretWord.toLowerCase())) {
-        await updateRoom({
-            status: 'RESULTS',
-            winner: 'IMPOSTOR',
-            victoryType: 'Palabra Acertada por Infiltrado'
+    // --- LISTENER ---
+    useEffect(() => {
+        if (!roomCode) return;
+        const unsub = onSnapshot(doc(db, 'rooms', roomCode), (snap) => {
+            if (snap.exists()) setRoomData(snap.data());
+            else setError("Sala no encontrada");
         });
-        return;
-    }
+        return () => unsub();
+    }, [roomCode]);
 
-    // 2. Cálculo de Turno (Lógica Pura)
-    const nextIdx = calculateNextTurn(gameData.currentTurnIndex, gameData.turnOrder, players);
-    const newLog = [...gameData.chatLog, { playerId, text, round: gameData.round }];
-
-    // 3. Determinar si cambia de fase (Si el turno vuelve al inicio o algo similar)
-    // NOTA: Aquí puedes decidir si al acabar la ronda pasas a VOTING automáticamente
-    // En el modo simple, solo pasamos turno.
-    
-    let nextStatus = roomData.status;
-    // Ejemplo: Si nextIdx es menor que el actual, asumimos nueva ronda -> Votación
-    if (nextIdx < gameData.currentTurnIndex) {
-         nextStatus = 'VOTING';
-    }
-
-    await updateRoom({
-        'gameData.chatLog': newLog,
-        'gameData.currentTurnIndex': nextIdx,
-        status: nextStatus
-    });
-  };
-
-  const handleVoting = async () => {
-    // ... (lógica de conteo de votos igual que antes) ...
-    // Supongamos que tenemos 'mostVoted' (id del expulsado)
-
-    if (!mostVoted || isTie) {
-        // Skip
-        await updateRoom({ 
-            'gameData.round': roomData.gameData.round + 1, 
-            status: 'PLAYING', votes: {}, lastEjected: null 
+    // --- ACCIONES ---
+    const createRoom = async (nickname) => {
+        const code = Math.random().toString(36).substring(2, 6).toUpperCase();
+        await setDoc(doc(db, 'rooms', code), {
+            code,
+            hostId: user.uid,
+            status: STATUS.LOBBY,
+            mode: 'TEXT', // Default
+            players: [{ id: user.uid, name: nickname, isAlive: true }],
+            createdAt: serverTimestamp()
         });
-        return;
-    }
+        setRoomCode(code);
+    };
 
-    // Actualizar muertes
-    const updatedPlayers = roomData.players.map(p => p.id === mostVoted ? {...p, isAlive: false} : p);
-    const ejectedPlayer = roomData.players.find(p => p.id === mostVoted);
+    const joinRoom = async (code, nickname) => {
+        const codeUp = code.toUpperCase();
+        try {
+            await updateDoc(doc(db, 'rooms', codeUp), {
+                players: arrayUnion({ id: user.uid, name: nickname, isAlive: true })
+            });
+            setRoomCode(codeUp);
+        } catch (e) { setError("Error al entrar (Sala llena o inexistente)"); }
+    };
 
-    // Usar el validador puro de victoria
-    const winResult = checkWinCondition(updatedPlayers, roomData.gameData.impostorId, mostVoted);
-
-    if (winResult) {
-        await updateRoom({
-            players: updatedPlayers,
-            winner: winResult.winner,
-            victoryType: winResult.victoryType,
-            status: 'RESULTS',
-            lastEjected: ejectedPlayer
+    const startGame = async () => {
+        const gameParams = generateGameParams(roomData.players);
+        await updateDoc(doc(db, 'rooms', roomCode), {
+            status: STATUS.ASSIGN,
+            gameData: gameParams,
+            votes: {}
         });
-    } else {
-        await updateRoom({
-            players: updatedPlayers,
-            'gameData.round': roomData.gameData.round + 1,
-            'gameData.currentTurnIndex': 0, // Reset turno
-            status: 'PLAYING',
-            votes: {},
-            lastEjected: ejectedPlayer
+    };
+
+    const submitChat = async (text) => {
+        const { gameData } = roomData;
+        
+        // Victoria Inmediata si Impostor dice palabra (Chat Mode)
+        if (user.uid === gameData.impostorId && text.toLowerCase().includes(gameData.secretWord.toLowerCase())) {
+            await updateDoc(doc(db, 'rooms', roomCode), { 
+                status: STATUS.RESULTS, winner: 'IMPOSTOR', victoryType: 'Palabra Acertada en Chat' 
+            });
+            return;
+        }
+
+        const nextIdx = gameData.currentTurnIndex + 1;
+        const roundOver =njextIdx >= gameData.turnOrder.length;
+
+        await updateDoc(doc(db, 'rooms', roomCode), {
+            'gameData.chatLog': [...gameData.chatLog, { playerId: user.uid, text }],
+            'gameData.currentTurnIndex': roundOver ? 0 : nextIdx,
+            status: roundOver ? STATUS.VOTING : STATUS.PLAYING
         });
-    }
-  };
+    };
+
+    const handleVote = async (targetId) => {
+        await updateDoc(doc(db, 'rooms', roomCode), { [`votes.${user.uid}`]: targetId });
+    };
+
+    const resolveVotes = async () => {
+        // Lógica de conteo simple
+        const votes = roomData.votes || {};
+        const counts = {};
+        Object.values(votes).forEach(v => counts[v] = (counts[v] || 0) + 1);
+        
+        // Encontrar el más votado
+        let max = 0, ejectedId = null, tie = false;
+        Object.entries(counts).forEach(([id, c]) => {
+            if (c > max) { max = c; ejectedId = id; tie = false; }
+            else if (c === max) tie = true;
+        });
+
+        if (!ejectedId || tie || ejectedId === 'SKIP') {
+            // Nadie expulsado
+            await updateDoc(doc(db, 'rooms', roomCode), { 
+                status: STATUS.PLAYING, 'gameData.round': roomData.gameData.round + 1, votes: {} 
+            });
+            return;
+        }
+
+        // Alguien expulsado
+        const newPlayers = roomData.players.map(p => p.id === ejectedId ? {...p, isAlive: false} : p);
+        const win = checkVictory(newPlayers, roomData.gameData.impostorId, ejectedId);
+
+        if (win) {
+            await updateDoc(doc(db, 'rooms', roomCode), { 
+                status: STATUS.RESULTS, winner: win.winner, victoryType: win.type, players: newPlayers 
+            });
+        } else {
+            await updateDoc(doc(db, 'rooms', roomCode), { 
+                status: STATUS.PLAYING, players: newPlayers, votes: {},
+                lastEjected: roomData.players.find(p => p.id === ejectedId) 
+            });
+        }
+    };
+
+    return { 
+        roomCode, roomData, error, 
+        createRoom, joinRoom, startGame, submitChat, handleVote, resolveVotes,
+        updateRoom: (data) => updateDoc(doc(db, 'rooms', roomCode), data)
+    };
+};
