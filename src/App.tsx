@@ -1,13 +1,12 @@
-import React, { useState } from 'react';
 import { Smartphone, Globe, ArrowRight } from 'lucide-react';
-import OnlineGame from './OnlineGame'; // Importamos el orquestador online
+import OnlineGame from './OnlineGame.jsx'; // Importamos el orquestador online
 // Importamos la lógica del juego offline (asumiendo que crearás este archivo)
-import OfflineGame from './OfflineGame'; 
-import { Button } from './components/UI';
+import OfflineGame from './OfflineGame.jsx'; 
+type AppMode = null | 'OFFLINE' | 'ONLINE';
+import { useState } from 'react';
 
 export default function App() {
-  const [appMode, setAppMode] = useState(null);
-
+  const [appMode, setAppMode] = useState<AppMode>(null);
   if (appMode === 'OFFLINE') return <OfflineGame onExit={() => setAppMode(null)} />;
   if (appMode === 'ONLINE') return <OnlineGame onExit={() => setAppMode(null)} />;
 

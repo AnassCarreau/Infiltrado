@@ -1,4 +1,12 @@
-{
+{ 
+  "compilerOptions": {
+    // PERMITE IMPORTAR MÓDULOS JAVASCRIPT/JSX
+    "allowJs": true, 
+    // PROCESA ARCHIVOS JSX
+    "jsx": "react", 
+    // PERMITE ARCHIVOS JS
+    "checkJs": true
+  },
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },

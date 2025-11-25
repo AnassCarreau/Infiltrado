@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { auth } from './config/firebase';
-import { useOnlineGame } from './hooks/useOnlineGame';
+import { auth } from './config/firebase.js';
+import { useOnlineGame } from './hooks/useOnlineGame.js';
 
 // Importa todas las pantallas
-import LandingScreen from './screens/LandingScreen';
-import LobbyScreen from './screens/LobbyScreen';
-import AssignScreen from './screens/AssignScreen';
-import PlayingScreen from './screens/PlayingScreen';
+import LandingScreen from './screens/LandingScreen.jsx';
+import LobbyScreen from './screens/LobbyScreen.jsx';
+import AssignScreen from './screens/AssignScreen.jsx';
+import PlayingScreen from './screens/PlayingScreen.jsx';
 import VotingScreen from './screens/VotingScreen.jsx';
-import ResultsScreen from './screens/ResultsScreen';
+import ResultsScreen from './screens/ResultsScreen.jsx';
 
 export default function OnlineGame({ onExit }) {
   const [user, setUser] = useState(null);
